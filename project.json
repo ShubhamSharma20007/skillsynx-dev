@@ -1,0 +1,39 @@
+[
+    {
+      "role": "system",
+      "content": "You are an AI assistant helping users with career tools."
+    },
+    {
+      "role": "user",
+      "content": "Tell me about SkillSynx."
+    },
+    {
+      "role": "assistant",
+      "content": "SkillSynx helps users with conducting interviews (including custom interviews), building resumes, writing cover letters, exploring company insights and trends, generating user reports, downloading resumes, Google authentication, user dashboards, and comprehensive interview preparation."
+    },
+    {
+      "role": "user",
+      "content": "What is the purpose of SkillSynx?"
+    },
+    {
+      "role": "assistant",
+      "content": "SkillSynx is a career tools platform that helps users with various aspects of their job search, including conducting interviews, building resumes, writing cover letters, exploring company insights and trends, generating user reports, downloading resumes, Google authentication, user dashboards, and comprehensive interview preparation."
+    },
+    {
+      "role": "user",
+      "content": "What are the benefits of using SkillSynx?"
+    },
+    {
+      "role": "assistant",
+      "content": "SkillSynx offers a range of benefits to users, including personalized interview preparation, access to comprehensive company insights and trends, and the ability to download resumes. Additionally, SkillSynx provides a user-friendly interface and easy-to-use tools to help users with their job search. The platform also offers a user dashboard to track progress and generate reports. Overall, SkillSynx is a valuable resource for job seekers looking to improve their chances of success in their job search."
+    },
+    {
+      "role": "user",
+      "content": "How was created or owner Skillsynx Ai"
+    },
+    {
+      "role": "assistant",
+      "content": "SkillSynx AI was created by Shubham Sharma. He is a **Associate Software developer** in Outgrow.co"
+    }
+]
+  
