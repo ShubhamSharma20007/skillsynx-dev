@@ -3,7 +3,7 @@ import { Bot } from 'lucide-react'
 import React, { useEffect } from 'react'
 
 import { Toggle } from "@/components/ui/toggle"
-import { useAbly } from '@/app/context/PusherContext'
+import { useSocket } from '@/app/context/PusherContext'
 import { AiChatInterface } from '@/interface/aiChatInterfce'
 import { useAuth } from '@clerk/nextjs'
 import { X } from 'lucide-react'
@@ -15,7 +15,7 @@ const Chatbot = ({ aiChats }: { aiChats: AiChatInterface[] }) => {
 
   const user = useAuth()
   const [visible, setVisible] = React.useState(false)
-  const { setMessages } = useAbly()
+  const { setMessages } = useSocket()
   function showChatBotContainer(e: React.MouseEvent<HTMLButtonElement, MouseEvent>) {
     const element = (e.target as HTMLButtonElement)
     if (!element) return 'element not found'

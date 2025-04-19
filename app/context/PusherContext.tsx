@@ -1,210 +1,178 @@
-"use client";
-import { createContext, useEffect, useState, useContext, useRef } from 'react';
-import * as Ably from 'ably';
-import { generateAIChatBoTResponse } from '@/services/ai-chats';
-import { useAuth } from '@clerk/nextjs'; // Import Clerk auth hook
-
-// Types
+"use client"
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import { io, Socket } from 'socket.io-client';
+import { useFetch } from '@/hooks/user-fetch';
+import { storeChats } from '@/services/ai-chats';
+import { useAuth } from '@clerk/nextjs';
 type MessageType = {
-  role: string;
-  content: string;
-};
+  role: string,
+  content: string,
+}
 
-type AblyMessageData = MessageType & { 
-  stream?: boolean;
-  userId?: string;
-};
-
-type AblyContextType = {
-  isConnected: boolean;
-  hasStreamingMessageRef: React.MutableRefObject<boolean>;
+interface MessageContextType {
   messages: MessageType[];
-  sendMessage: (message?: string) => Promise<void>;
-  streaming: boolean;
   setMessages: React.Dispatch<React.SetStateAction<MessageType[]>>;
-  clearMessages: () => void;
-};
+  socket: Socket | null;
+  isConnected: boolean;
+  sendMessage: (message: string) => void;
+  hasStreamingMessageRef: React.MutableRefObject<boolean>;
+  streaming:boolean;
+}
 
-// Create context with the correct type
-const AblyContext = createContext<AblyContextType | null>(null);
+const SocketContext = createContext<MessageContextType>({
+  messages: [],
+  setMessages: () => {},
+  socket: null,
+  isConnected: false,
+  sendMessage: () => {},
+  hasStreamingMessageRef:{current:false} as React.MutableRefObject<boolean>,
+  streaming: false
 
-export const AblyProvider = ({ children }: { children: React.ReactNode }) => {
+});
+const URL ={
+  production:'https://skillsynx-socket-backend-1.onrender.com',
+  development:'http://localhost:3000'
+} as const
+
+const env = (process.env.NODE_ENV ?? 'development') as keyof typeof URL;
+const SOCKET_URL = 'https://skillsynx-socket-backend-1.onrender.com'
+
+
+export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const {userId} =useAuth()
   const [messages, setMessages] = useState<MessageType[]>([]);
+  const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const [streaming, setStreaming] = useState(false);
+  const [streaming,setStreaming] = useState(false);
   const currentStreamRef = useRef<string>('');
   const hasStreamingMessageRef = useRef<boolean>(false);
-  const ablyRef = useRef<Ably.Realtime | null>(null);
-  const { userId } = useAuth(); // Get the current user ID from Clerk
-  
+
   useEffect(() => {
-    // Initialize Ably
-    const ably = new Ably.Realtime({
-      key: process.env.NEXT_PUBLIC_ABLY_KEY || '',
-      // Alternative: use token authentication
-      authUrl: '/api/ably-token',
+    if (typeof window === 'undefined') return;
+    
+    const socketInstance = io(SOCKET_URL, {
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      timeout: 20000
     });
-  
-    ablyRef.current = ably;
-  
-    // Subscribe to the chat channel
-    const channel = ably.channels.get('chat');
-  
-    const handleChatResponse = (message: any) => {
-      const data = message.data as AblyMessageData;
-      
-      // Only process messages for the current user
-      if (data.userId && data.userId !== userId) {
-        return;
-      }
+    
+    setSocket(socketInstance);
+
+    socketInstance.on('connect', () => {
+      console.log('Socket connected with ID:', socketInstance.id);
+      setIsConnected(true);
+    });
+
+    socketInstance.on('chat_response', (data) => {
       
       if (data.stream) {
         if (!hasStreamingMessageRef.current) {
           hasStreamingMessageRef.current = true;
-          currentStreamRef.current = data.content || '';
-  
-          setMessages(prev => [...prev, {
-            role: data.role,
-            content: data.content || ''
+          currentStreamRef.current = data.content
+          
+          setMessages(prev => [...prev, { 
+            role: data.role, 
+            content: data.content 
           }]);
         } else {
           currentStreamRef.current += data.content || '';
-  
           setMessages(prev => {
-            const updated = [...prev];
-            const lastIndex = updated.length - 1;
+            const updatedMessages = [...prev];
+            const lastIndex = updatedMessages.length - 1;
             if (lastIndex >= 0) {
-              updated[lastIndex] = {
-                ...updated[lastIndex],
+              updatedMessages[lastIndex] = {
+                ...updatedMessages[lastIndex],
                 content: currentStreamRef.current
               };
             }
-            return updated;
+            return updatedMessages;
           });
         }
       }
-    };
-  
-    const handleStreamComplete = (message: any) => {
-      const data = message.data as AblyMessageData;
-      
-      // Only process messages for the current user
-      if (data.userId && data.userId !== userId) {
-        return;
-      }
-      
+    });
+    
+    socketInstance.on('stream_complete', (data) => {
       hasStreamingMessageRef.current = false;
       currentStreamRef.current = '';
-  
-      setMessages(prev => {
-        const idx = prev.findLastIndex(msg => msg.role === 'assistant');
-        if (idx >= 0) {
-          const updated = [...prev];
-          updated[idx] = {
-            ...updated[idx],
-            content: data.content || updated[idx].content
+       setMessages(prev => {
+        const assistantIndex = prev.findLastIndex(msg => msg.role === 'assistant');
+        if (assistantIndex >= 0) {
+          const updatedMessages = [...prev];
+          updatedMessages[assistantIndex] = {
+            role: data.role,
+            content: data.content
           };
-          return updated;
+          return updatedMessages;
         }
+
         return [...prev, {
           role: data.role,
-          content: data.content || ''
+          content: data.content
         }];
       });
-  
       setStreaming(false);
-    };
-  
-    // Subscribe to events
-    channel.subscribe('chat_response', handleChatResponse);
-    channel.subscribe('stream_complete', handleStreamComplete);
-  
-    // Connection state handling
-    ably.connection.on('connected', () => {
-      setIsConnected(true);
-      console.log('Connected to Ably');
+      
     });
-
-    ably.connection.on('disconnected', () => {
+    
+    socketInstance.on('disconnect', () => {
+      console.log('Socket disconnected');
       setIsConnected(false);
-      console.log('Disconnected from Ably');
     });
-  
+
+    socketInstance.on('connect_error', (err) => {
+      console.error('Socket connection error:', err.message);
+      setIsConnected(false);
+    });
+
     return () => {
-      channel.unsubscribe('chat_response', handleChatResponse);
-      channel.unsubscribe('stream_complete', handleStreamComplete);
-      ably.connection.off();
-      ably.close();
+      socketInstance.disconnect();
     };
-  }, [userId]); // Reinitialize connection if user ID changes
-  
-  const sendMessage = async (message: string = '') => {
-    if (!ablyRef.current || !message.trim()) return;
+  }, []);
 
-    setStreaming(true);
-    hasStreamingMessageRef.current = false;
-    currentStreamRef.current = '';
-
-    // Add user message to state
-    setMessages(prev => [...prev, { role: 'user', content: message }]);
-
-    // Add an empty assistant message as a placeholder if no streaming message appears
-    setTimeout(() => {
-      if (!hasStreamingMessageRef.current) {
-        setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
-      }
-    }, 300);
-
-    try {
-      await generateAIChatBoTResponse(message);
-    } catch (error) {
-      console.error('Error generating response:', error);
-      setMessages(prev => {
-        const idx = prev.findLastIndex(msg => msg.role === 'assistant');
-        if (idx >= 0) {
-          const updated = [...prev];
-          updated[idx] = {
-            role: 'assistant',
-            content: 'Sorry, there was an error generating a response. Please try again.'
-          };
-          return updated;
+  const sendMessage = (message: string ='') => {
+    if (socket && isConnected) {
+      setStreaming(true);
+      hasStreamingMessageRef.current = false;
+      currentStreamRef.current = '';
+      
+      setMessages(prev => [...prev, { role: 'user', content: message }]);
+    
+      const timeoutId = setTimeout(() => {
+        if (!hasStreamingMessageRef.current) {
+          setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
         }
-        return [...prev, {
-          role: 'assistant',
-          content: 'Sorry, there was an error generating a response. Please try again.'
-        }];
-      });
-      setStreaming(false);
+      }, 300); 
+      let payload ={
+        msg:message,
+        user:userId
+      }
+      socket.emit('chat_message', payload);
+      return () => clearTimeout(timeoutId);
+    } else {
+      console.error('Socket not connected');
     }
   };
 
-  // Add a function to clear messages
-  const clearMessages = () => {
-    setMessages([]);
-  };
-
   return (
-    <AblyContext.Provider
-      value={{
-        isConnected,
-        hasStreamingMessageRef,
-        messages,
-        setMessages,
-        sendMessage,
-        streaming,
-        clearMessages,
-      }}
-    >
+    <SocketContext.Provider value={{ 
+      messages, 
+      setMessages, 
+      socket, 
+      isConnected,
+      sendMessage,
+      hasStreamingMessageRef,
+      streaming
+    }}>
       {children}
-    </AblyContext.Provider>
+    </SocketContext.Provider>
   );
 };
 
-// Custom hook to use the Ably context
-export const useAbly = () => {
-  const context = useContext(AblyContext);
+export const useSocket = () => {
+  const context = useContext(SocketContext);
   if (!context) {
-    throw new Error('useAbly must be used within an AblyProvider');
+    throw new Error('useSocket must be used within a SocketProvider');
   }
   return context;
 };

@@ -3,7 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import Header from "@/components/header";
-import { AblyProvider } from "./context/PusherContext";
+import { SocketProvider } from "./context/PusherContext";
 // import { cronJob } from "@/lib/cron";
 import {
   ClerkProvider,
@@ -52,9 +52,9 @@ export default async  function RootLayout({
               
           <Header/>
            <main className="min-h-screen">
-            <AblyProvider>
+            <SocketProvider>
             {children}
-           </AblyProvider>
+           </SocketProvider>
            </main>
            <Toaster richColors />
           </ThemeProvider>

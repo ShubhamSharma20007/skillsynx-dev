@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/card"
 
 import { Input } from "@/components/ui/input"
-import { useAbly } from "@/app/context/PusherContext"
+import { useSocket } from "@/app/context/PusherContext"
 import { useForm } from "react-hook-form"
 import Loader from "@/components/Loader"
 import { useUser } from "@clerk/nextjs";
@@ -26,7 +26,7 @@ type VisibityDispatcherProps ={
 
 export function ChatBotContainer(VisibityDispatcherProps: VisibityDispatcherProps) {
   const {user} = useUser();
-  const { isConnected, hasStreamingMessageRef, messages, sendMessage, streaming } = useAbly();
+  const { isConnected, hasStreamingMessageRef, messages, sendMessage, streaming } = useSocket();
   let chatContainer = React.useRef<HTMLDivElement | null>(null)
   const { watch, register, handleSubmit, reset, getValues, formState: { errors } } = useForm({
     defaultValues: {
