@@ -69,7 +69,7 @@ export const generateAIChatBoTResponse = async (content: string) => {
   // Get thread ID for this specific user
   const userDets = await getThreadId(clerkUserId);
   
-  if (!userDets || userDets === false) {
+  if (!userDets) {
     throw new Error("Thread ID missing");
   }
   
