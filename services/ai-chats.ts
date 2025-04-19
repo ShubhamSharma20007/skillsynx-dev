@@ -7,12 +7,12 @@ import { auth } from "@clerk/nextjs/server";
 import { aiModel, getThreadId } from "@/lib/opean-ai.js";
 import * as Ably from 'ably';
 
-let threadMap = new Map();
-
 // Initialize Ably with the secret key
-// This is safe on the server-side
 const ably = new Ably.Rest(process.env.NEXT_PUBLIC_ABLY_SECRET_KEY!);
 const channel = ably.channels.get('chat');
+
+// Use a map to track thread IDs by user ID
+const userThreadMap = new Map();
 
 export const storeChats = async ({ role, content }:{role:string,content:string}) => {
   await dbConnect();
@@ -44,6 +44,7 @@ export const getAIChats = async () => {
   try {
     await dbConnect()
     const { userId } = await auth();
+    console.log(userId)
     if (!userId) throw new Error("id not found");
     const user = await userModel.findOne({ clerkUserId: userId });
     if (!user) throw new Error("User not found");
@@ -57,67 +58,89 @@ export const getAIChats = async () => {
 export const generateAIChatBoTResponse = async (content: string) => {
   await dbConnect();
   const { userId: clerkUserId } = await auth();
+  
+  if (!clerkUserId) throw new Error("User ID not found");
+  
   const user = await userModel.findOne({ clerkUserId });
   if (!user) throw new Error("User not found");
-  console.log(user)
+  
+  console.log("Processing request for user:", user.name || clerkUserId);
+  
+  // Get thread ID for this specific user
   const userDets = await getThreadId(clerkUserId);
-  console.log(userDets)
-  if (userDets !== false) {
-    if (
-      !threadMap.has('threadId') ||
-      !threadMap.has('current_user') ||
-      !threadMap.has('current_user_id')
-    ) {
-      threadMap.set('threadId', userDets.threadId);
-      threadMap.set('current_user', userDets.name);
-      threadMap.set('current_user_id', userDets.userId);
-    }
-  } else {
+  
+  if (!userDets || userDets === false) {
     throw new Error("Thread ID missing");
   }
-
-  const thread = threadMap.get('threadId');
+  
+  // Store thread data per user
+  if (!userThreadMap.has(clerkUserId)) {
+    userThreadMap.set(clerkUserId, {
+      threadId: userDets.threadId,
+      userName: userDets.name,
+      userId: userDets.userId
+    });
+  }
+  
+  const userData = userThreadMap.get(clerkUserId);
+  const thread = userData.threadId;
+  
   if (!thread) throw new Error("Thread ID missing");
 
+  // Store the user message in the database
   await storeChats({ role: 'user', content });
 
+  // Reset the assistant context for this specific thread
   await aiModel.beta.threads.messages.create(thread, {
     role: 'assistant',
     content: `You are a helpful AI assistant for user query. 
-  - ${threadMap.get('current_user') ? 'The current user is ' + threadMap.get('current_user') + '.' : ''} 
+  - ${userData.userName ? 'The current user is ' + userData.userName + '.' : ''} 
+  - You should give a direct response to the current question.
+  - Do not reference previous questions unless they are directly related.
+  - Respond to each question independently.
   - Do not generate code. 
-  - You must be mentioned of username in initial first message.
   - Mention the user's name no more than twice.`
-  
   });
 
+  // Send the user message to the AI model
   await aiModel.beta.threads.messages.create(thread, {
     role: 'user',
     content,
   });
 
   let fullResponse = '';
+  
+  // Stream the response from the AI model
   const stream = await aiModel.beta.threads.runs.stream(thread, {
     assistant_id: process.env.NEXT_PUBLIC_ASSISTANT_ID!,
     stream: true,
   });
 
+  // Process the streaming response
   stream.on('textDelta', async (textDelta) => {
     if (textDelta.value) {
       fullResponse += textDelta.value;
+      
+      // Publish each part of the streaming response
       await channel.publish('chat_response', {
         content: textDelta.value,
         stream: true,
         role: 'assistant',
+        userId: clerkUserId, // Add user ID to identify which user this response is for
       });
     }
   });
 
+  // When the stream is complete
   stream.on('end', async () => {
+    // Store the complete response
     await storeChats({ role: 'assistant', content: fullResponse });
+    
+    // Publish the complete response
     await channel.publish('stream_complete', {
       content: fullResponse,
       role: 'assistant',
+      userId: clerkUserId, // Add user ID to identify which user this response is for
     });
   });
 
@@ -126,6 +149,7 @@ export const generateAIChatBoTResponse = async (content: string) => {
   });
 };
 
+// Utility function to create an Ably token
 export const createAblyToken = async (clientId: string) => {
   try {
     const tokenParams = { clientId };

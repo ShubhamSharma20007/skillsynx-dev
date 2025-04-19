@@ -2,6 +2,7 @@
 import { createContext, useEffect, useState, useContext, useRef } from 'react';
 import * as Ably from 'ably';
 import { generateAIChatBoTResponse } from '@/services/ai-chats';
+import { useAuth } from '@clerk/nextjs'; // Import Clerk auth hook
 
 // Types
 type MessageType = {
@@ -10,7 +11,8 @@ type MessageType = {
 };
 
 type AblyMessageData = MessageType & { 
-  stream?: boolean 
+  stream?: boolean;
+  userId?: string;
 };
 
 type AblyContextType = {
@@ -20,6 +22,7 @@ type AblyContextType = {
   sendMessage: (message?: string) => Promise<void>;
   streaming: boolean;
   setMessages: React.Dispatch<React.SetStateAction<MessageType[]>>;
+  clearMessages: () => void;
 };
 
 // Create context with the correct type
@@ -31,13 +34,15 @@ export const AblyProvider = ({ children }: { children: React.ReactNode }) => {
   const [streaming, setStreaming] = useState(false);
   const currentStreamRef = useRef<string>('');
   const hasStreamingMessageRef = useRef<boolean>(false);
-  const ablyRef = useRef<Ably.Realtime | null>(null); // For managing the Ably instance
-
+  const ablyRef = useRef<Ably.Realtime | null>(null);
+  const { userId } = useAuth(); // Get the current user ID from Clerk
+  
   useEffect(() => {
-    // Initialize Ably with the key directly for client-side
-    // Note: In production, it's better to use token authentication
+    // Initialize Ably
     const ably = new Ably.Realtime({
-      key: process.env.NEXT_PUBLIC_ABLY_SECRET_KEY || '',
+      key: process.env.NEXT_PUBLIC_ABLY_KEY || '',
+      // Alternative: use token authentication
+      authUrl: '/api/ably-token',
     });
   
     ablyRef.current = ably;
@@ -47,6 +52,11 @@ export const AblyProvider = ({ children }: { children: React.ReactNode }) => {
   
     const handleChatResponse = (message: any) => {
       const data = message.data as AblyMessageData;
+      
+      // Only process messages for the current user
+      if (data.userId && data.userId !== userId) {
+        return;
+      }
       
       if (data.stream) {
         if (!hasStreamingMessageRef.current) {
@@ -76,7 +86,12 @@ export const AblyProvider = ({ children }: { children: React.ReactNode }) => {
     };
   
     const handleStreamComplete = (message: any) => {
-      const data = message.data as MessageType;
+      const data = message.data as AblyMessageData;
+      
+      // Only process messages for the current user
+      if (data.userId && data.userId !== userId) {
+        return;
+      }
       
       hasStreamingMessageRef.current = false;
       currentStreamRef.current = '';
@@ -85,10 +100,16 @@ export const AblyProvider = ({ children }: { children: React.ReactNode }) => {
         const idx = prev.findLastIndex(msg => msg.role === 'assistant');
         if (idx >= 0) {
           const updated = [...prev];
-          updated[idx] = data;
+          updated[idx] = {
+            ...updated[idx],
+            content: data.content || updated[idx].content
+          };
           return updated;
         }
-        return [...prev, data];
+        return [...prev, {
+          role: data.role,
+          content: data.content || ''
+        }];
       });
   
       setStreaming(false);
@@ -101,10 +122,12 @@ export const AblyProvider = ({ children }: { children: React.ReactNode }) => {
     // Connection state handling
     ably.connection.on('connected', () => {
       setIsConnected(true);
+      console.log('Connected to Ably');
     });
 
     ably.connection.on('disconnected', () => {
       setIsConnected(false);
+      console.log('Disconnected from Ably');
     });
   
     return () => {
@@ -113,24 +136,51 @@ export const AblyProvider = ({ children }: { children: React.ReactNode }) => {
       ably.connection.off();
       ably.close();
     };
-  }, []);
+  }, [userId]); // Reinitialize connection if user ID changes
   
   const sendMessage = async (message: string = '') => {
-    if (!ablyRef.current) return;
+    if (!ablyRef.current || !message.trim()) return;
 
     setStreaming(true);
     hasStreamingMessageRef.current = false;
     currentStreamRef.current = '';
 
+    // Add user message to state
     setMessages(prev => [...prev, { role: 'user', content: message }]);
 
+    // Add an empty assistant message as a placeholder if no streaming message appears
     setTimeout(() => {
       if (!hasStreamingMessageRef.current) {
         setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
       }
     }, 300);
 
-    await generateAIChatBoTResponse(message);
+    try {
+      await generateAIChatBoTResponse(message);
+    } catch (error) {
+      console.error('Error generating response:', error);
+      setMessages(prev => {
+        const idx = prev.findLastIndex(msg => msg.role === 'assistant');
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = {
+            role: 'assistant',
+            content: 'Sorry, there was an error generating a response. Please try again.'
+          };
+          return updated;
+        }
+        return [...prev, {
+          role: 'assistant',
+          content: 'Sorry, there was an error generating a response. Please try again.'
+        }];
+      });
+      setStreaming(false);
+    }
+  };
+
+  // Add a function to clear messages
+  const clearMessages = () => {
+    setMessages([]);
   };
 
   return (
@@ -142,6 +192,7 @@ export const AblyProvider = ({ children }: { children: React.ReactNode }) => {
         setMessages,
         sendMessage,
         streaming,
+        clearMessages,
       }}
     >
       {children}
